@@ -9,20 +9,26 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.net.URI;
+import java.security.SecureRandom;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ThreadFactory;
 
 public class SimpleWebsocket implements Closeable {
     private final Socket socket;
     private final InputStream in;
     private final OutputStream out;
 
+    private final boolean isClient;
+    private final SecureRandom random;
+
     private long maxPayloadLength = 16384;
     private long pingFrequency = 5000L;
     private boolean sentCloseFrame = false;
     private boolean nonBlockingMode = false;
+    private boolean handleIncomingPingsAutomatically = true;
     private final Object sendQueueLock = new Object();
     private boolean closed = false;
     private final List<WebSocketMessage> sendQueue = new LinkedList<>();
@@ -34,12 +40,14 @@ public class SimpleWebsocket implements Closeable {
         return nextId++;
     }
 
-    public SimpleWebsocket(Socket socket) throws IOException {
+    SimpleWebsocket(Socket socket, boolean isClient) throws IOException {
         this.socket = socket;
         this.in = socket.getInputStream();
         this.out = socket.getOutputStream();
         this.socket.setSoTimeout(15000);
         this.id = id();
+        this.isClient = isClient;
+        this.random = isClient ? new SecureRandom() : null;
     }
 
     public static SimpleWebsocket connect(URI uri) throws IOException {
@@ -55,6 +63,10 @@ public class SimpleWebsocket implements Closeable {
     }
 
     public void useNonBlockingMode(long pingFrequency) {
+        useNonBlockingMode(pingFrequency, true, null);
+    }
+
+    public void useNonBlockingMode(long pingFrequency, boolean handleIncomingPingsAutomatically, ThreadFactory threadFactory) {
         synchronized (sendQueueLock) {
             if (nonBlockingMode) {
                 return;
@@ -62,8 +74,18 @@ public class SimpleWebsocket implements Closeable {
             nonBlockingMode = true;
         }
         this.pingFrequency = pingFrequency;
-        new Thread(this::incomingThread, "WebSocket-" + id + "-In").start();
-        new Thread(this::outgoingThread, "WebSocket-" + id + "-Out").start();
+        this.handleIncomingPingsAutomatically = handleIncomingPingsAutomatically;
+        if (threadFactory == null) {
+            new Thread(this::incomingThread, "WebSocket-" + id + "-In").start();
+            new Thread(this::outgoingThread, "WebSocket-" + id + "-Out").start();
+        } else {
+            Thread incoming = threadFactory.newThread(this::incomingThread);
+            incoming.setName("WebSocket-" + id + "-In");
+            incoming.start();
+            Thread outgoing = threadFactory.newThread(this::outgoingThread);
+            outgoing.setName("WebSocket-" + id + "-Out");
+            outgoing.start();
+        }
     }
 
     public WebSocketMessage read() throws IOException {
@@ -73,23 +95,31 @@ public class SimpleWebsocket implements Closeable {
         return read0();
     }
 
+    private final ByteArrayOutputStream readBuffer = new ByteArrayOutputStream();
+
     private WebSocketMessage read0() throws IOException {
         int opcode = 0;
-        ByteArrayOutputStream o = new ByteArrayOutputStream();
         while (true) {
             WebSocketPacket pkt = read1();
             if (pkt == null) {
                 return null;
             }
             if (pkt.opcode != WebSocketMessage.OPCODE_CONTINUATION) {
-                o.reset();
+                readBuffer.reset();
                 opcode = pkt.opcode;
             }
-            o.write(pkt.decoded);
             if (pkt.fin) {
-                WebSocketMessage msg = new WebSocketMessage(opcode, o.toByteArray());
-                o.reset();
-                return msg;
+                byte[] payload;
+                if (readBuffer.size() != 0) {
+                    readBuffer.write(pkt.decoded);
+                    payload = readBuffer.toByteArray();
+                    readBuffer.reset();
+                } else {
+                    payload = pkt.decoded;
+                }
+                return new WebSocketMessage(opcode, payload);
+            } else {
+                readBuffer.write(pkt.decoded);
             }
         }
     }
@@ -178,31 +208,42 @@ public class SimpleWebsocket implements Closeable {
         }
     }
 
+    private final byte[] headerBuffer = new byte[14];
+
     private void send0(WebSocketMessage msg) throws IOException {
         int headerLength = 2;
-        byte[] header = new byte[10];
-        header[0] = (byte) (0x80 + (msg.getOpcode() & 0xF));
+        headerBuffer[0] = (byte) (0x80 + (msg.getOpcode() & 0xF));
         int len = msg.getLength();
         if (len >= 126 && len <= 65535) {
             headerLength = 4;
-            header[1] = (byte) (126);
-            header[2] = (byte) ((len >> 8) & 0xff);
-            header[3] = (byte) (len & 0xff);
+            headerBuffer[1] = (byte) (126);
+            headerBuffer[2] = (byte) ((len >> 8) & 0xff);
+            headerBuffer[3] = (byte) (len & 0xff);
         } else if (len >= 65536) {
             headerLength = 10;
-            header[1] = (byte) 127;
-            header[2] = (byte) 0;
-            header[3] = (byte) 0;
-            header[4] = (byte) 0;
-            header[5] = (byte) 0;
-            header[6] = (byte) ((len >> 24) & 0xff);
-            header[7] = (byte) ((len >> 16) & 0xff);
-            header[8] = (byte) ((len >> 8) & 0xff);
-            header[9] = (byte) (len & 0xff);
+            headerBuffer[1] = (byte) 127;
+            headerBuffer[2] = (byte) 0;
+            headerBuffer[3] = (byte) 0;
+            headerBuffer[4] = (byte) 0;
+            headerBuffer[5] = (byte) 0;
+            headerBuffer[6] = (byte) ((len >> 24) & 0xff);
+            headerBuffer[7] = (byte) ((len >> 16) & 0xff);
+            headerBuffer[8] = (byte) ((len >> 8) & 0xff);
+            headerBuffer[9] = (byte) (len & 0xff);
         } else {
-            header[1] = (byte) (len);
+            headerBuffer[1] = (byte) (len);
         }
-        out.write(header, 0, headerLength);
+        byte[] mask;
+        if (isClient) {
+            mask = new byte[4];
+            random.nextBytes(mask);
+            headerBuffer[1] |= (byte) 0x80;
+            System.arraycopy(mask, 0, headerBuffer, headerLength, 4);
+            headerLength += 4;
+        } else {
+            mask = null;
+        }
+        out.write(headerBuffer, 0, headerLength);
         out.write(msg.getBytes());
         out.flush();
     }
@@ -243,9 +284,14 @@ public class SimpleWebsocket implements Closeable {
                 }
                 switch (msg.getOpcode()) {
                     case WebSocketMessage.OPCODE_PING:
-                        break;
+                        if (handleIncomingPingsAutomatically) {
+                            send(WebSocketMessage.createPong(msg));
+                            continue;
+                        } else {
+                            break;
+                        }
                     case WebSocketMessage.OPCODE_PONG:
-                        continue;
+                        break;
                 }
                 synchronized (listeners) {
                     for (WebSocketListener listener : listeners) {

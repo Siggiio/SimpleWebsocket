@@ -65,7 +65,7 @@ class SimpleWebsocketUtil {
                 throw new IOException("Server does not support WebSocket");
             }
             success = true;
-            return new SimpleWebsocket(socket);
+            return new SimpleWebsocket(socket, true);
         } finally {
             if (!success) {
                 try {
@@ -85,7 +85,7 @@ class SimpleWebsocketUtil {
 
         request.response.setHeader("Sec-WebSocket-Accept", Util.generateExpectedResponse(webSocketKey));
 
-        return new SimpleWebsocket(request.response.upgradeConnection("websocket"));
+        return new SimpleWebsocket(request.response.upgradeConnection("websocket"), false);
     }
 
     static boolean isWebsocketRequest(HTTPRequest request) {

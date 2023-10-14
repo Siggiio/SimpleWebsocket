@@ -55,6 +55,20 @@ public class WebSocketMessage {
         return new WebSocketMessage(opcode, zeroBytes);
     }
 
+    /**
+     * Create a pong in response to a ping
+     *
+     * @param ping the ping message
+     * @return the message
+     * @throws IllegalArgumentException if the passed WebSocketMessage is not a ping message
+     */
+    public static WebSocketMessage createPong(WebSocketMessage ping) {
+        if (ping.getOpcode() != OPCODE_PING) {
+            throw new IllegalArgumentException("This is not a ping message!");
+        }
+        return new WebSocketMessage(OPCODE_PONG, ping.bytes);
+    }
+
     private final int opcode;
     private final byte[] bytes;
 
