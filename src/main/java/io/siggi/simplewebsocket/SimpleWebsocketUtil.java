@@ -1,0 +1,143 @@
+package io.siggi.simplewebsocket;
+
+import io.siggi.http.HTTPRequest;
+
+import javax.net.ssl.SSLSocketFactory;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.Socket;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+class SimpleWebsocketUtil {
+    static SimpleWebsocket connect(URI uri) throws IOException {
+        String scheme = uri.getScheme().toLowerCase();
+        if (!scheme.equals("ws") && !scheme.equals("wss"))
+            throw new IllegalArgumentException("Scheme must be ws or wss.");
+        boolean secure = scheme.equals("wss");
+        String host = uri.getHost();
+        int port = uri.getPort();
+        int defaultPort = secure ? 443 : 80;
+        if (port == -1)
+            port = defaultPort;
+        String path = uri.getPath();
+
+        Socket socket;
+
+        if (secure) {
+            socket = SSLSocketFactory.getDefault().createSocket(host, port);
+        } else {
+            socket = new Socket(host, port);
+        }
+
+        boolean success = false;
+        try {
+
+            InputStream in = socket.getInputStream();
+            OutputStream out = socket.getOutputStream();
+
+            String userAgent = "Siggi-SimpleWebsocketClient";
+
+            String nonce = Util.generateNonce();
+            String expectedResponse = Util.generateExpectedResponse(nonce);
+
+            writeLine(out, "GET " + uri.getRawPath() + " HTTP/1.1");
+            writeLine(out, "User-Agent: " + userAgent);
+            writeLine(out, "Host: " + host + (port == defaultPort ? "" : (":" + port)));
+            writeLine(out, "Connection: Upgrade");
+            writeLine(out, "Upgrade: websocket");
+            writeLine(out, "Sec-WebSocket-Key: " + nonce);
+            writeLine(out, "Sec-WebSocket-Version: 13");
+            writeLine(out, "");
+
+            String firstLine = readLine(in);
+            if (!firstLine.contains("101")) {
+                throw new IOException("Server does not support WebSocket");
+            }
+            Map<String, String> headers = readHeaders(in);
+
+            String response = headers.get("sec-websocket-accept");
+            if (!expectedResponse.equals(response)) {
+                throw new IOException("Server does not support WebSocket");
+            }
+            success = true;
+            return new SimpleWebsocket(socket);
+        } finally {
+            if (!success) {
+                try {
+                    socket.close();
+                } catch (Exception e) {
+                }
+            }
+        }
+    }
+
+    static SimpleWebsocket accept(HTTPRequest request) throws IOException {
+        String webSocketKey = request.getHeader("Sec-WebSocket-Key");
+        if (!"Upgrade".equalsIgnoreCase(request.getHeader("Connection"))
+                || !"websocket".equalsIgnoreCase(request.getHeader("Upgrade"))
+                || webSocketKey == null)
+            throw new IOException("Not a Websocket request.");
+
+        request.response.setHeader("Sec-WebSocket-Accept", Util.generateExpectedResponse(webSocketKey));
+
+        return new SimpleWebsocket(request.response.upgradeConnection("websocket"));
+    }
+
+    static boolean isWebsocketRequest(HTTPRequest request) {
+        String webSocketKey = request.getHeader("Sec-WebSocket-Key");
+        if (!"Upgrade".equalsIgnoreCase(request.getHeader("Connection"))
+                || !"websocket".equalsIgnoreCase(request.getHeader("Upgrade"))
+                || webSocketKey == null)
+            return false;
+        return true;
+    }
+
+    private static Map<String, String> readHeaders(InputStream in) throws IOException {
+        HashMap<String, String> map = new HashMap<>();
+        String line;
+        while ((line = readLine(in)) != null) {
+            if (line.isEmpty())
+                break;
+            int colonPos = line.indexOf(":");
+            if (colonPos >= 0) {
+                String key = line.substring(0, colonPos).trim();
+                String value = line.substring(colonPos + 1).trim();
+                map.put(key.toLowerCase(), value);
+            }
+        }
+        return map;
+    }
+
+    private static String readLine(InputStream in) throws IOException {
+        byte[] bytes = new byte[256];
+        int c;
+        int read = 0;
+        boolean readSomething = false;
+        while ((c = in.read()) != -1) {
+            readSomething = true;
+            if (c == 0x0A) {
+                if (read > 0 && bytes[read - 1] == (byte) 0x0D) {
+                    read -= 1;
+                }
+                break;
+            }
+            if (read >= bytes.length) {
+                bytes = Arrays.copyOf(bytes, bytes.length * 2);
+            }
+            bytes[read++] = (byte) c;
+        }
+        if (!readSomething) {
+            return null;
+        }
+        return new String(bytes, 0, read, StandardCharsets.UTF_8);
+    }
+
+    private static void writeLine(OutputStream out, String line) throws IOException {
+        out.write((line + "\r\n").getBytes(StandardCharsets.UTF_8));
+    }
+}
