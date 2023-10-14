@@ -25,7 +25,7 @@ public class WebSocketMessage {
      * @return the message
      */
     public static WebSocketMessage create(String message) {
-        return new WebSocketMessage(1, message.getBytes(StandardCharsets.UTF_8));
+        return new WebSocketMessage(OPCODE_TEXT, message.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -37,7 +37,7 @@ public class WebSocketMessage {
     public static WebSocketMessage create(byte[] message) {
         byte[] msg = new byte[message.length];
         System.arraycopy(message, 0, msg, 0, message.length);
-        return new WebSocketMessage(2, msg);
+        return new WebSocketMessage(OPCODE_BINARY, msg);
     }
 
     /**

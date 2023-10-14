@@ -81,7 +81,7 @@ public class SimpleWebsocket implements Closeable {
             if (pkt == null) {
                 return null;
             }
-            if (pkt.opcode > 0) {
+            if (pkt.opcode != WebSocketMessage.OPCODE_CONTINUATION) {
                 o.reset();
                 opcode = pkt.opcode;
             }
