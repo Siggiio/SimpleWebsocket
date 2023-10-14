@@ -284,7 +284,7 @@ public class SimpleWebsocket implements Closeable {
                             break a;
                         }
                         long now = System.currentTimeMillis();
-                        boolean needToSendPing = (now - lastSentPing) >= pingFrequency;
+                        boolean needToSendPing = pingFrequency > 0L && (now - lastSentPing) >= pingFrequency;
                         long nextPing;
                         if (needToSendPing) {
                             lastSentPing = now;
