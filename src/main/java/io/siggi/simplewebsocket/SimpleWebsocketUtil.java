@@ -45,7 +45,12 @@ class SimpleWebsocketUtil {
             String nonce = Util.generateNonce();
             String expectedResponse = Util.generateExpectedResponse(nonce);
 
-            writeLine(out, "GET " + uri.getRawPath() + " HTTP/1.1");
+            String requestPath = uri.toString();
+            int position = requestPath.indexOf("/", requestPath.indexOf("//") + 2);
+            requestPath = position == -1 ? "/" : requestPath.substring(position);
+            if (requestPath.contains("#")) requestPath = requestPath.substring(0, requestPath.indexOf("#"));
+
+            writeLine(out, "GET " + requestPath + " HTTP/1.1");
             writeLine(out, "Host: " + host + (port == defaultPort ? "" : (":" + port)));
             writeLine(out, "Sec-WebSocket-Key: " + nonce);
             writeLine(out, "Sec-WebSocket-Version: 13");
