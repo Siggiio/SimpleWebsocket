@@ -10,9 +10,12 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.net.URI;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadFactory;
 
@@ -51,7 +54,11 @@ public class SimpleWebsocket implements Closeable {
     }
 
     public static SimpleWebsocket connect(URI uri) throws IOException {
-        return SimpleWebsocketUtil.connect(uri);
+        return SimpleWebsocketUtil.connect(uri, null);
+    }
+
+    public static SimpleWebsocket connect(URI uri, WebsocketHeaders headers) throws IOException {
+        return SimpleWebsocketUtil.connect(uri, headers);
     }
 
     public static SimpleWebsocket accept(HTTPRequest request) throws IOException {

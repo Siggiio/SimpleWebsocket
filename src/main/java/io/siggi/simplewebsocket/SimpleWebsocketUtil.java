@@ -11,10 +11,12 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 class SimpleWebsocketUtil {
-    static SimpleWebsocket connect(URI uri) throws IOException {
+    static SimpleWebsocket connect(URI uri, WebsocketHeaders requestHeaders) throws IOException {
+        if (requestHeaders == null) requestHeaders = new WebsocketHeaders();
         String scheme = uri.getScheme().toLowerCase();
         if (!scheme.equals("ws") && !scheme.equals("wss"))
             throw new IllegalArgumentException("Scheme must be ws or wss.");
@@ -40,18 +42,18 @@ class SimpleWebsocketUtil {
             InputStream in = socket.getInputStream();
             OutputStream out = socket.getOutputStream();
 
-            String userAgent = "Siggi-SimpleWebsocketClient";
-
             String nonce = Util.generateNonce();
             String expectedResponse = Util.generateExpectedResponse(nonce);
 
             writeLine(out, "GET " + uri.getRawPath() + " HTTP/1.1");
-            writeLine(out, "User-Agent: " + userAgent);
             writeLine(out, "Host: " + host + (port == defaultPort ? "" : (":" + port)));
-            writeLine(out, "Connection: Upgrade");
-            writeLine(out, "Upgrade: websocket");
             writeLine(out, "Sec-WebSocket-Key: " + nonce);
             writeLine(out, "Sec-WebSocket-Version: 13");
+            for (Map.Entry<String, List<String>> entry : requestHeaders.getHeaders().entrySet()) {
+                for (String value : entry.getValue()) {
+                    writeLine(out, entry.getKey() + ": " + value);
+                }
+            }
             writeLine(out, "");
 
             String firstLine = readLine(in);
