@@ -251,8 +251,17 @@ public class SimpleWebsocket implements Closeable {
             mask = null;
         }
         out.write(headerBuffer, 0, headerLength);
-        out.write(msg.getBytes());
+        out.write(maskMessage(mask, msg.getBytes()));
         out.flush();
+    }
+
+    public byte[] maskMessage(byte[] maskKey, byte[] message) {
+        if (maskKey != null) {
+            for (int i = 0; i < message.length; i++) {
+                message[i] = (byte) ((((int) message[i]) & 0xff) ^ (((int) maskKey[i % 4]) & 0xff));
+            }
+        }
+        return message;
     }
 
     @Override
